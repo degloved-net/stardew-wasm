@@ -1,11 +1,11 @@
 {
   "mainAssemblyName": "stardew",
   "resources": {
-    "hash": "sha256-dLcnZfb4tJfHkP/qDXLyhnPHgcwlgI5AagdPBilO99g=",
+    "hash": "sha256-FIQrcFf31hMghNqBqo/iws84lWmRnTqVQKwfgDeuEvs=",
     "fingerprinting": {
       "FNA.3fnvg6athk.wasm": "FNA.wasm",
       "mscorlib.cc8mjfsbbi.wasm": "mscorlib.wasm",
-      "stardew.gguyc43j5h.wasm": "stardew.wasm",
+      "stardew.ykxgvkjwb6.wasm": "stardew.wasm",
       "System.Collections.Concurrent.ecln8c7u4r.wasm": "System.Collections.Concurrent.wasm",
       "System.Collections.NonGeneric.5ryvt8698k.wasm": "System.Collections.NonGeneric.wasm",
       "System.Collections.Specialized.tmjmwnow7m.wasm": "System.Collections.Specialized.wasm",
@@ -53,7 +53,7 @@
       "System.Xml.ReaderWriter.jdtq43bqu8.wasm": "System.Xml.ReaderWriter.wasm",
       "System.Xml.XmlSerializer.e5uisw7343.wasm": "System.Xml.XmlSerializer.wasm",
       "dotnet.native.kmwq27umef.js": "dotnet.native.js",
-      "dotnet.native.oicutn7u95.wasm": "dotnet.native.wasm",
+      "dotnet.native.ibzmjfd8ef.wasm": "dotnet.native.wasm",
       "dotnet.native.worker.ratb5i3t1q.mjs": "dotnet.native.worker.mjs",
       "dotnet.js": "dotnet.js",
       "dotnet.runtime.unr07ptbi3.js": "dotnet.runtime.js",
@@ -71,7 +71,7 @@
       "dotnet.runtime.unr07ptbi3.js": "sha256-CofdivoXB+IldBV1G9jGtS+vlRWBd3MJZLTWgDVXrHI="
     },
     "wasmNative": {
-      "dotnet.native.oicutn7u95.wasm": "sha256-BD5BhcBDMY4mrWQhP89yj9yGIdD7MYm9/MiffT/GrgI="
+      "dotnet.native.ibzmjfd8ef.wasm": "sha256-TDvsG/i38GQL+PxGN1Yt15gknMtKKXLG5Yo5gkYehM8="
     },
     "icu": {
       "icudt_CJK.tjcz0u77k5.dat": "sha256-SZLtQnRc0JkwqHab0VUVP7T3uBPSeYzxzDnpxPpUnHk=",
@@ -81,7 +81,7 @@
     "coreAssembly": {
       "FNA.3fnvg6athk.wasm": "sha256-sa+Km0www/yHBThJwdE5y1Jd4EST4OlIMb+OlRv2/Z4=",
       "mscorlib.cc8mjfsbbi.wasm": "sha256-vOKrcowmLMkexi039C14HhAwxrr1vMH71eT18bM4+oA=",
-      "stardew.gguyc43j5h.wasm": "sha256-sNoL7mlXNDEHmmzX/2AtLzqMmQG3cRnM4yiGikH5aB4=",
+      "stardew.ykxgvkjwb6.wasm": "sha256-/nJrHgfdhtae0kDSASQ7EMc4nw6WogBfjZm+B73ipuA=",
       "System.Collections.Concurrent.ecln8c7u4r.wasm": "sha256-MoxduBPBQWPp+IocfiKLj+f+aguVX9kxTi2O2/Mz6fc=",
       "System.Collections.NonGeneric.5ryvt8698k.wasm": "sha256-T0GqoT4SV0S3j2ne4o7Xshw6pqADk2KeQqo9aAsIOVk=",
       "System.Collections.Specialized.tmjmwnow7m.wasm": "sha256-5WiJtPmvWyphcLAVQ6eqcxqsMdir1/Lb1qfjSOj/HL0=",

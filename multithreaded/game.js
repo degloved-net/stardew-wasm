@@ -2,11 +2,6 @@ const loading = document.getElementById("loading");
 const canvas = document.getElementById("canvas");
 const musicChoice = document.getElementById("music-choice");
 
-if (!crossOriginIsolated) {
-	loading.textContent = "Enabling cross-origin isolation...";
-	throw new Error("Waiting for cross-origin isolation (page will reload)");
-}
-
 const wantMusic = await new Promise(async (resolve) => {
 	const root = await navigator.storage.getDirectory();
 	let hasAudio = false;
@@ -175,7 +170,9 @@ async function ensureContent() {
 
 await ensureContent();
 
+console.log("importing dotnet.js");
 const { dotnet } = await import("./_framework/dotnet.js");
+console.log("dotnet imported, creating runtime");
 
 const runtime = await dotnet
 	.withModuleConfig({ canvas })
@@ -190,13 +187,25 @@ const runtime = await dotnet
 		"--jiterpreter-stats-enabled",
 	])
 	.withResourceLoader((type, _name, defaultUri, _integrity, behavior) => {
+		console.log("resourceLoader:", type, _name, defaultUri, behavior);
 		if (type === "dotnetwasm" && behavior === "dotnetwasm") {
 			return (async () => {
 				let idx = 0;
+				let chunkCount = -1;
 				const fetchNext = async () => {
+					if (chunkCount >= 0 && idx >= chunkCount) return null;
 					const res = await fetch(defaultUri + idx);
 					idx++;
 					if (!res.ok) return null;
+					if (chunkCount < 0) {
+						const total = res.headers.get("X-Chunk-Count");
+						if (!total) {
+							const countRes = await fetch(defaultUri.replace(/\.wasm$/, ".wasm.count"));
+							chunkCount = countRes.ok ? parseInt(await countRes.text()) : -1;
+						} else {
+							chunkCount = parseInt(total);
+						}
+					}
 					return res.body.getReader();
 				};
 
@@ -225,10 +234,12 @@ const runtime = await dotnet
 			})();
 		}
 	})
-	.create();
+	.create().catch(e => { console.error("create failed:", e); throw e; });
 
+console.log("runtime created");
 const config = runtime.getConfig();
 const exports = await runtime.getAssemblyExports(config.mainAssemblyName);
+console.log("exports loaded");
 
 await runtime.runMain();
 await exports.WasmBootstrap.PreInit();
