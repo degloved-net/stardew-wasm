@@ -72,59 +72,68 @@ async function getTar(baseName, label) {
 	return tar;
 }
 
-let contentTar = await getTar("Content.tar", "game content");
-let audioTar = wantMusic ? await getTar("ContentAudio.tar", "music") : null;
+const contentPromise = getTar("Content.tar", "game content");
 
-const { dotnet } = await import("./_framework/dotnet.js");
+const bootRuntime = async () => {
+	const { dotnet } = await import("./_framework/dotnet.js");
+	return dotnet
+		.withModuleConfig({ canvas })
+		.withEnvironmentVariable("MONO_SLEEP_ABORT_LIMIT", "99999")
+		.withRuntimeOptions([
+			`--jiterpreter-minimum-trace-hit-count=${500}`,
+			`--jiterpreter-trace-monitoring-period=${100}`,
+			`--jiterpreter-trace-monitoring-max-average-penalty=${150}`,
+			`--jiterpreter-wasm-bytes-limit=${64 * 1024 * 1024}`,
+			`--jiterpreter-table-size=${32 * 1024}`,
+			"--jiterpreter-stats-enabled",
+		])
+		.withResourceLoader((type, _name, defaultUri, _integrity, behavior) => {
+			if (type === "dotnetwasm" && behavior === "dotnetwasm") {
+				return (async () => {
+					const countRes = await fetch(defaultUri + ".count");
+					const count = parseInt(await countRes.text());
 
-const runtime = await dotnet
-	.withModuleConfig({ canvas })
-	.withEnvironmentVariable("MONO_SLEEP_ABORT_LIMIT", "99999")
-	.withRuntimeOptions([
-		`--jiterpreter-minimum-trace-hit-count=${500}`,
-		`--jiterpreter-trace-monitoring-period=${100}`,
-		`--jiterpreter-trace-monitoring-max-average-penalty=${150}`,
-		`--jiterpreter-wasm-bytes-limit=${64 * 1024 * 1024}`,
-		`--jiterpreter-table-size=${32 * 1024}`,
-		"--jiterpreter-stats-enabled",
-	])
-	.withResourceLoader((type, _name, defaultUri, _integrity, behavior) => {
-		if (type === "dotnetwasm" && behavior === "dotnetwasm") {
-			return (async () => {
-				let idx = 0;
-				const fetchNext = async () => {
-					const res = await fetch(defaultUri + idx);
-					idx++;
-					if (!res.ok) return null;
-					return res.body.getReader();
-				};
+					let idx = 0;
+					const fetchNext = async () => {
+						if (idx >= count) return null;
+						const res = await fetch(defaultUri + idx);
+						idx++;
+						if (!res.ok) return null;
+						return res.body.getReader();
+					};
 
-				let current = await fetchNext();
-				if (!current) throw new Error("failed to fetch first wasm chunk");
+					let current = await fetchNext();
+					if (!current) throw new Error("failed to fetch first wasm chunk");
 
-				const stream = new ReadableStream({
-					async pull(controller) {
-						const { value, done } = await current.read();
-						if (done || !value) {
-							current = await fetchNext();
-							if (current) {
-								await this.pull(controller);
+					const stream = new ReadableStream({
+						async pull(controller) {
+							const { value, done } = await current.read();
+							if (done || !value) {
+								current = await fetchNext();
+								if (current) {
+									await this.pull(controller);
+								} else {
+									controller.close();
+								}
 							} else {
-								controller.close();
+								controller.enqueue(value);
 							}
-						} else {
-							controller.enqueue(value);
-						}
-					},
-				});
+						},
+					});
 
-				return new Response(stream, {
-					headers: { "Content-Type": "application/wasm" },
-				});
-			})();
-		}
-	})
-	.create();
+					return new Response(stream, {
+						headers: { "Content-Type": "application/wasm" },
+					});
+				})();
+			}
+		})
+		.create();
+};
+
+const runtimePromise = bootRuntime();
+
+// Wait for both content download and runtime boot
+const [contentTar, runtime] = await Promise.all([contentPromise, runtimePromise]);
 
 const config = runtime.getConfig();
 const exports = await runtime.getAssemblyExports(config.mainAssemblyName);
@@ -132,60 +141,55 @@ const exports = await runtime.getAssemblyExports(config.mainAssemblyName);
 await runtime.runMain();
 await exports.WasmBootstrap.PreInit();
 
+function extractTar(tar, prefix) {
+	let pos = 0;
+	let fileCount = 0;
+
+	function readString(buf, off, len) {
+		let end = off;
+		while (end < off + len && buf[end] !== 0) end++;
+		return new TextDecoder().decode(buf.subarray(off, end));
+	}
+
+	function readOctal(buf, off, len) {
+		const s = readString(buf, off, len).trim();
+		return s ? parseInt(s, 8) : 0;
+	}
+
+	while (pos + 512 <= tar.length) {
+		const header = tar.subarray(pos, pos + 512);
+		if (header.every(b => b === 0)) break;
+
+		const name = readString(header, 0, 100);
+		const size = readOctal(header, 124, 12);
+		const typeFlag = header[156];
+		const pref = readString(header, 345, 155);
+		const fullName = pref ? pref + "/" + name : name;
+
+		pos += 512;
+
+		if (typeFlag === 53 || typeFlag === 0x35 || name.endsWith("/")) {
+			exports.WasmBootstrap.CreateContentDirectory(prefix + fullName);
+		} else if (typeFlag === 48 || typeFlag === 0 || typeFlag === 0x30) {
+			exports.WasmBootstrap.WriteContentFile(
+				prefix + fullName,
+				tar.subarray(pos, pos + size),
+			);
+			fileCount++;
+		}
+
+		pos += Math.ceil(size / 512) * 512;
+	}
+	return fileCount;
+}
+
 loading.textContent = "Loading game files...";
-{
-	function extractTar(tar, prefix) {
-		let pos = 0;
-		let fileCount = 0;
+extractTar(contentTar, "/libsdl/");
 
-		function readString(buf, off, len) {
-			let end = off;
-			while (end < off + len && buf[end] !== 0) end++;
-			return new TextDecoder().decode(buf.subarray(off, end));
-		}
-
-		function readOctal(buf, off, len) {
-			const s = readString(buf, off, len).trim();
-			return s ? parseInt(s, 8) : 0;
-		}
-
-		while (pos + 512 <= tar.length) {
-			const header = tar.subarray(pos, pos + 512);
-			if (header.every(b => b === 0)) break;
-
-			const name = readString(header, 0, 100);
-			const size = readOctal(header, 124, 12);
-			const typeFlag = header[156];
-			const pref = readString(header, 345, 155);
-			const fullName = pref ? pref + "/" + name : name;
-
-			pos += 512;
-
-			if (typeFlag === 53 || typeFlag === 0x35 || name.endsWith("/")) {
-				exports.WasmBootstrap.CreateContentDirectory(prefix + fullName);
-			} else if (typeFlag === 48 || typeFlag === 0 || typeFlag === 0x30) {
-				exports.WasmBootstrap.WriteContentFile(
-					prefix + fullName,
-					tar.subarray(pos, pos + size),
-				);
-				fileCount++;
-			}
-
-			pos += Math.ceil(size / 512) * 512;
-		}
-		return fileCount;
-	}
-
-	let total = extractTar(contentTar, "/libsdl/");
-	contentTar = null;
-
-	if (audioTar) {
-		loading.textContent = "Loading music...";
-		const audioCount = extractTar(audioTar, "/libsdl/");
-		audioTar = null;
-		total += audioCount;
-	}
-
+if (wantMusic) {
+	const audioTar = await getTar("ContentAudio.tar", "music");
+	loading.textContent = "Loading music...";
+	extractTar(audioTar, "/libsdl/");
 }
 
 loading.classList.add("hidden");
