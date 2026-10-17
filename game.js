@@ -2,6 +2,43 @@ const loading = document.getElementById("loading");
 const canvas = document.getElementById("canvas");
 const musicChoice = document.getElementById("music-choice");
 
+// --- Performance configuration ---
+// FNA already runs a fixed 60 Hz loop. The largest available win is rendering
+// fewer pixels: Stardew's art is pixel art and the bundle cannot be rebuilt.
+// Default: CSS resolution, capped to ~1080p of backing pixels.
+// Override: ?scale=0.5 (lighter) or ?scale=2 (retina supersampling).
+const MAX_RENDER_PIXELS = 1920 * 1080;
+const params = new URLSearchParams(location.search);
+const scaleParam = Number(params.get("scale"));
+const fixedScale = Number.isFinite(scaleParam) && scaleParam > 0
+	? Math.min(Math.max(scaleParam, 0.25), 2)
+	: null;
+const preserveDrawingBuffer = params.get("preserve") === "1";
+
+function renderSize() {
+	const w = Math.round(canvas.clientWidth) || 1280;
+	const h = Math.round(canvas.clientHeight) || 720;
+	const scale = fixedScale ?? Math.min(1, Math.sqrt(MAX_RENDER_PIXELS / (w * h)));
+	return [Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale))];
+}
+
+// Emscripten's WebGL context forces preserveDrawingBuffer: true, which makes
+// the browser keep a copy of every frame. Force cheap attributes on the game
+// canvas only; ?preserve=1 restores readback for screenshots.
+const getContext = HTMLCanvasElement.prototype.getContext;
+HTMLCanvasElement.prototype.getContext = function (type, attributes) {
+	if (this === canvas && /^(webgl2?|experimental-webgl)$/.test(type)) {
+		attributes = {
+			...attributes,
+			alpha: false,
+			antialias: false,
+			preserveDrawingBuffer,
+			powerPreference: "high-performance",
+		};
+	}
+	return getContext.call(this, type, attributes);
+};
+
 // --- OPFS helpers ---
 const opfs = await navigator.storage.getDirectory();
 // Ask the browser not to evict the cached content or save archive under storage
@@ -90,13 +127,12 @@ const wantMusic = audioCached || await new Promise((resolve) => {
 musicChoice.style.display = "none";
 
 // --- Parallel: download tars + boot runtime ---
-const contentP = getTar("Content.tar", "game content", "Content.tar");
-const audioP = wantMusic ? getTar("ContentAudio.tar", "music", "ContentAudio.tar") : Promise.resolve(null);
 const runtimeP = (async () => {
 	const { dotnet } = await import("./_framework/dotnet.js");
 	return dotnet
 		.withModuleConfig({ canvas })
 		.withEnvironmentVariable("MONO_SLEEP_ABORT_LIMIT", "99999")
+		.withEnvironmentVariable("MONO_GC_PARAMS", "nursery-size=16m")
 		.withRuntimeOptions([
 			`--jiterpreter-minimum-trace-hit-count=${500}`,
 			`--jiterpreter-trace-monitoring-period=${100}`,
@@ -136,7 +172,11 @@ const runtimeP = (async () => {
 		.create();
 })();
 
-const [contentTar, audioTar, runtime] = await Promise.all([contentP, audioP, runtimeP]);
+let [contentTar, audioTar, runtime] = await Promise.all([
+	getTar("Content.tar", "game content", "Content.tar"),
+	wantMusic ? getTar("ContentAudio.tar", "music", "ContentAudio.tar") : Promise.resolve(null),
+	runtimeP,
+]);
 const exports = await runtime.getAssemblyExports(runtime.getConfig().mainAssemblyName);
 
 // --- Validate and extract tar into WasmFS ---
@@ -249,21 +289,46 @@ try {
 
 loading.textContent = "Loading game files...";
 extractTar(contentTar, "/libsdl/");
-if (audioTar) { loading.textContent = "Loading music..."; extractTar(audioTar, "/libsdl/"); }
+contentTar = null;
+if (audioTar) {
+	loading.textContent = "Loading music...";
+	extractTar(audioTar, "/libsdl/");
+	audioTar = null;
+}
 
 loading.classList.add("hidden");
 
-const dpr = window.devicePixelRatio || 1;
-const w = Math.round(canvas.clientWidth * dpr) || 1280;
-const h = Math.round(canvas.clientHeight * dpr) || 720;
+const [w, h] = renderSize();
 await exports.WasmBootstrap.Init(w, h);
 
-new ResizeObserver(() => {
-	const dpr = window.devicePixelRatio || 1;
-	const nw = Math.round(canvas.clientWidth * dpr);
-	const nh = Math.round(canvas.clientHeight * dpr);
-	if (nw > 0 && nh > 0) try { exports.WasmBootstrap.Resize(nw, nh); } catch {}
-}).observe(canvas);
+// FNA takes its window size from window.innerWidth/innerHeight, so anything that
+// changes the CSS size (a browser resize, fullscreen) makes the game re-apply
+// the full CSS size to the backing store, and FNA3D does the same again when the
+// graphics device initializes. Re-assert the capped size over the next frames
+// and stop as soon as the backing store matches.
+function applyRenderSize() {
+	const [nw, nh] = renderSize();
+	if (nw === canvas.width && nh === canvas.height) return false;
+	try {
+		exports.WasmBootstrap.Resize(nw, nh);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+// Each chain is bounded: it stops as soon as the backing store matches the
+// requested size, so a game that refuses to resize costs at most a few frames.
+function enforceRenderSize(attempts) {
+	const step = (left) => {
+		if (!applyRenderSize() || left <= 0) return;
+		requestAnimationFrame(() => step(left - 1));
+	};
+	requestAnimationFrame(() => step(attempts));
+}
+
+new ResizeObserver(() => enforceRenderSize(6)).observe(canvas);
+enforceRenderSize(8);
 
 try { void navigator.keyboard?.lock().catch(() => {}); } catch {}
 document.addEventListener("keydown", (e) => {
